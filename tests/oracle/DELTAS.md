@@ -7557,7 +7557,6 @@ Follow-up to the Dart entry above, from PR review and a detector run against a r
 - The design hook scans `.dart` targets on native PRODUCT.md platforms (`ios`/`android`/`adaptive`); other files keep skipping.
 
 Re-recorded from the binary and reviewed by hand: `detect-fixture-{json,text}-dart-should-flag-dart`, plus the sweeps that contain the fixture (`detect-dir-{json,text}-all-fixtures`, `detect-no-advisory-{json,text}`). The finding set is unchanged — seven findings, one advisory, exit 2 — and `side-tab`/the gradient shift one line because the fixture's stripe now sits on a `borderRadius`. Every non-Dart row in those sweeps is byte-identical. The pass fixture stays at zero findings; it gained a square one-sided border as a negative shape, which emits nothing.
->>>>>>> 4e05f3fdd (Fix: Dart pass parity with the web engine and the native-platform gate)
 
 ## Recorded 2026-11-20: the static flush check reads clamp(), logical padding and centred labels (#1596, #1604, #1605)
 
@@ -7586,3 +7585,9 @@ Every static-HTML finding reported `line: 0`, so a finding on a long single-file
 - SARIF (`detect-sarif`): the result gains `region.startLine: 1` (more than a line number).
 - Cursor denial (`hbe-html-engine`, more than a line number): the denial names `L1`, and its denial counter key reads `low-contrast:1` instead of `low-contrast:0`.
 - Every other moved case (`detect-fixture-{json,text}-*-html`, `detect-config-*`, `detect-design-blue-*`, `detect-hard-offset-shadow-*`, `detect-ignore-globstar-directory-boundary-json`, `detect-github`, `hook-edit-html-fresh`, `hook-config-max-findings-1`): line numbers only.
+
+## Recorded 2026-10-21: Flutter projects count as a visual implementation (context)
+
+`hasVisualImplementation` walked only the web-shaped source dirs, so a Flutter app with all its widgets in `lib/` reported `false` and the context directives told the agent there was no incumbent visual system. The scan now adds `lib` for a project whose `pubspec.yaml` depends on the Flutter SDK and inspects `.dart` files there: a widget declaration (`Widget build(`, a widget `State`/`StatelessWidget`-family class) or two style declarations count, while a plain Dart package stays excluded. `staleness_deep`'s directory filter gains `lib` for the same reason.
+
+`context-native-ios`, `context-adaptive`, `context-adaptive-word` and `context-android` were re-recorded from the binary. Their only delta predates this change: the branch added the "A Flutter app is native here" sentence to `ios.md`/`android.md` without re-recording these four goldens, and the platform reference is echoed in their output. No other context case moved, and the `hasVisualImplementation` value in every fixture workspace is unchanged (none of them holds a Flutter `lib/`).
