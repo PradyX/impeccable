@@ -139,7 +139,7 @@ pub fn run_hook(rt: &Runtime, stdin: &str) -> RunResult {
     let project_cwd =
         resolve_cache_cwd(rt, primary_files.first().map(String::as_str), &session_cwd);
     audit.insert("cwd".into(), Value::String(project_cwd.clone()));
-    let target_files = expand_scan_targets(rt, &primary_files, &project_cwd);
+    let mut target_files = expand_scan_targets(rt, &primary_files, &project_cwd);
     let session_value = session_id_of(&event);
     audit.insert(
         "session".into(),
@@ -178,14 +178,20 @@ pub fn run_hook(rt: &Runtime, stdin: &str) -> RunResult {
 
     let platform = resolve_project_platform(rt, &project_cwd);
     if is_native_platform(platform.as_deref()) {
-        return result(
-            &audit,
-            vec![
-                ("skipped", Value::from("native-platform")),
-                ("platform", Value::String(platform.unwrap_or_default())),
-                ("durationMs", ms_since(started)),
-            ],
-        );
+        // Flutter UI is Dart, and the Dart pass runs on every platform. Keep
+        // the `.dart` targets and skip the rest of a native project's files,
+        // which have no browser-DOM or CSS scan to contribute.
+        target_files.retain(|f| is_dart_path(f));
+        if target_files.is_empty() {
+            return result(
+                &audit,
+                vec![
+                    ("skipped", Value::from("native-platform")),
+                    ("platform", Value::String(platform.unwrap_or_default())),
+                    ("durationMs", ms_since(started)),
+                ],
+            );
+        }
     }
 
     // Several Impeccable hooks can fire for one edit (home and project
@@ -890,6 +896,18 @@ pub fn run_stop_hook(rt: &Runtime, stdin: &str) -> RunResult {
             ));
             continue;
         }
+        // Flutter UI is Dart, and the Dart pass reads it on every platform: a
+        // native project still scans the `.dart` files this session touched and
+        // skips the rest, as the per-edit pass does.
+        let mut root_memo = if at_session_cwd { platform_memo.clone() } else { None };
+        let native = native_skip(&root_audit, root, &mut root_memo);
+        let dart_only = native.is_some();
+        if let Some(skip) = native {
+            if !touched.iter().any(|(f, _)| is_dart_path(f)) {
+                first_skip.get_or_insert(skip);
+                continue;
+            }
+        }
         // A plugin hook next to a project hook fires this pass twice at once:
         // only the first copy scans, as PostToolUse does.
         // The key covers only what the pass below can scan, under the same
@@ -903,6 +921,7 @@ pub fn run_stop_hook(rt: &Runtime, stdin: &str) -> RunResult {
                     && !is_sensitive_path(f)
                     && !is_generated_path(f)
                     && (ALLOWED_EXTS.contains(&ext.as_str()) || match_configured_extension(f, &root_config.extensions).is_some())
+                    && (!dart_only || is_dart_path(f))
                     && !is_ignored_file(&rt.proc_cwd, f, root, &root_config.ignore_files)
                     && exists(f)
                     && is_scan_target_inside_project(rt, f, root)
@@ -923,11 +942,6 @@ pub fn run_stop_hook(rt: &Runtime, stdin: &str) -> RunResult {
             ));
             continue;
         }
-        let mut root_memo = if at_session_cwd { platform_memo.clone() } else { None };
-        if let Some(skip) = native_skip(&root_audit, root, &mut root_memo) {
-            first_skip.get_or_insert(skip);
-            continue;
-        }
         let mut scans = HashMap::new();
         let mut groups: Vec<Group> = Vec::new();
         let mut dirty = false;
@@ -945,6 +959,9 @@ pub fn run_stop_hook(rt: &Runtime, stdin: &str) -> RunResult {
                 continue;
             }
             let ext = js::to_lower_case(&jsp::extname(file_path));
+            if dart_only && ext != ".dart" {
+                continue;
+            }
             let configured = match_configured_extension(file_path, &root_config.extensions);
             if !ALLOWED_EXTS.contains(&ext.as_str()) && configured.is_none() {
                 continue;
