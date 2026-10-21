@@ -35,7 +35,7 @@ pub const ENVELOPE_PREFIX: &str = "[impeccable@1]";
 
 pub const ALLOWED_EXTS: &[&str] = &[
     ".tsx", ".jsx", ".html", ".htm", ".vue", ".svelte", ".astro", ".css", ".scss", ".sass",
-    ".less", ".ts", ".js",
+    ".less", ".ts", ".js", ".dart",
 ];
 
 /// Plain scripts: mostly not UI (a server, a CLI, a config file), so the hook
@@ -82,6 +82,7 @@ pub fn plain_script_out_of_scope(ext: &str, configured: bool, root: &str, env: &
 
 pub const ACK_EXTS: &[&str] = &[
     ".tsx", ".jsx", ".html", ".htm", ".vue", ".svelte", ".astro", ".css", ".scss", ".sass", ".less",
+    ".dart",
 ];
 
 const WS: &str = impeccable_core::js::WS;
