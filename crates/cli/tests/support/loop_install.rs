@@ -100,11 +100,42 @@ mod mac {
     use std::net::TcpListener;
     use std::thread;
 
+    /// A Mach-O that keeps running (or exits at once) in place of a platform binary. The
+    /// source comes in on stdin: a stray .c file inside the bundle makes codesign refuse it.
+    fn stand_in(out: &Path, body: &str) {
+        use std::io::Write as _;
+        let mut child = Command::new("/usr/bin/cc")
+            .args(["-x", "c", "-o"])
+            .arg(out)
+            .arg("-")
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(format!("#include <stdlib.h>\n#include <unistd.h>\n{body}\n").as_bytes())
+            .unwrap();
+        let status = child.wait().unwrap();
+        assert!(status.success(), "cc could not build the Loop stand-in {}", out.display());
+    }
+
     fn fixture(version: &str, root: &Path) -> Vec<u8> {
         let app = root.join(APP);
         fs::create_dir_all(app.join("Contents/MacOS")).unwrap();
-        fs::copy("/bin/sleep", app.join("Contents/MacOS/Impeccable Loop")).unwrap();
-        fs::copy("/bin/echo", app.join("Contents/MacOS/loop-hook")).unwrap();
+        // Not copies of /bin/sleep and /bin/echo: those are platform binaries, and on Apple
+        // Silicon the kernel kills a copy outside /bin (SIGKILL, platform signature), so the
+        // fixture app never ran and `ps` never listed it: the Loop these tests quit and swap
+        // was never running. A compiled stand-in runs wherever the toolchain does.
+        stand_in(
+            &app.join("Contents/MacOS/Impeccable Loop"),
+            "int main(int argc, char **argv) { if (argc > 1) sleep(atoi(argv[1])); for (;;) pause(); return 0; }",
+        );
+        stand_in(
+            &app.join("Contents/MacOS/loop-hook"),
+            "int main(void) { return 0; }",
+        );
         fs::write(app.join("Contents/Info.plist"), format!(r#"<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleExecutable</key><string>Impeccable Loop</string><key>CFBundleShortVersionString</key><string>{version}</string></dict></plist>"#)).unwrap();
         // The Info.plist invalidates the copied binary's Apple signature, so macOS kills the
         // launched bundle and shows a "damaged" dialog. Re-sign it ad hoc.

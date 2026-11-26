@@ -26,6 +26,17 @@ impl Box {
         fs::create_dir_all(root.join("home/.claude")).unwrap();
         fs::create_dir_all(root.join("home/.codex")).unwrap();
         fs::create_dir_all(root.join("bin")).unwrap();
+        // The fakes keep the agents' JSON with jq, and the box's PATH is only bin:/usr/bin:/bin,
+        // so hand the box the jq this machine has instead of assuming jq sits in /usr/bin: on
+        // macOS it is a Homebrew install elsewhere, and a bare PATH never sees it.
+        let jq = std::env::var_os("PATH")
+            .and_then(|path| {
+                std::env::split_paths(&path)
+                    .map(|dir| dir.join("jq"))
+                    .find(|jq| jq.is_file())
+            })
+            .expect("the loop connect fakes need jq on PATH (brew install jq)");
+        std::os::unix::fs::symlink(&jq, root.join("bin/jq")).unwrap();
         let mut env = HashMap::new();
         env.insert("HOME".into(), root.join("home").display().to_string());
         env.insert(
