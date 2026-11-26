@@ -1045,3 +1045,31 @@ fn live_generate_asks_the_harness_to_open_the_page_instead_of_a_second_browser()
     assert_eq!(waited["error"], serde_json::json!("no_browser_connected"), "{waited}");
     assert!(waited["_instructions"].as_str().unwrap().contains("browser_navigate"), "{waited}");
 }
+
+/// A socket that connects and sends nothing (a browser's preconnect, or an
+/// EventSource the client abandoned but left open) must not hold the arrival
+/// lane: every later request that touches server state waits behind its
+/// accept-order ticket until the silent peer dies, up to
+/// `READ_REQUEST_DEADLINE`. It gives the place up instead, so the next
+/// mutation answers at once.
+#[test]
+fn a_silent_connection_does_not_stall_a_mutation() {
+    let s = Server::start("silent-conn");
+    let silent = TcpStream::connect(("127.0.0.1", s.port)).expect("connect the live server");
+    // Let the accept loop issue this connection's ticket before the POST, so
+    // the POST really is waiting behind it.
+    std::thread::sleep(Duration::from_millis(150));
+    let started = Instant::now();
+    let (status, body) = post_json(
+        s.port,
+        "/agent-target-claim",
+        serde_json::json!({ "token": s.token, "targetId": "none", "clientId": "tab-a", "eligible": true }),
+    );
+    let waited = started.elapsed();
+    assert_eq!(status, 200, "{body}");
+    assert!(
+        waited < Duration::from_millis(750),
+        "a silent connection stalled a mutation for {waited:?}"
+    );
+    drop(silent);
+}

@@ -377,8 +377,9 @@ pub fn run(args: &[String], io: &mut Io) -> i32 {
                 let active = active_connections.clone();
                 let shared = shared.clone();
                 let ticket = turnstile.issue();
+                let turnstile_for_thread = turnstile.clone();
                 std::thread::spawn(move || {
-                    handle_connection(shared, stream, ticket);
+                    handle_connection(shared, stream, ticket, turnstile_for_thread);
                     active.fetch_sub(1, Ordering::SeqCst);
                 });
             }
@@ -619,8 +620,47 @@ fn text_res(status: u16, content_type: Option<&str>, body: &str) -> Response {
     r.text(body)
 }
 
-fn handle_connection(shared: Shared, mut stream: TcpStream, mut ticket: Ticket) {
+/// How long a newly accepted connection gets to put its first byte on the
+/// wire before it gives up its place in the arrival lane. A client that means
+/// to use the connection writes its request line at once, in the same burst
+/// as the handshake; only a socket nobody is talking on waits this out.
+const REQUEST_START_GRACE: Duration = Duration::from_millis(100);
+
+/// Whether the peer has already started its request. `peek` does not consume
+/// the bytes, so [`read_request_deadline`] still reads the whole request.
+fn peer_has_sent_bytes(stream: &TcpStream) -> bool {
+    if stream.set_read_timeout(Some(REQUEST_START_GRACE)).is_err() {
+        // The wait cannot be bounded on this socket: keep the accept-order
+        // place rather than reordering a request that may be arriving.
+        return true;
+    }
+    let mut first = [0u8; 1];
+    let started = matches!(stream.peek(&mut first), Ok(n) if n > 0);
+    set_header_timeout(stream);
+    started
+}
+
+fn handle_connection(
+    shared: Shared,
+    mut stream: TcpStream,
+    mut ticket: Ticket,
+    turnstile: Arc<Turnstile>,
+) {
     set_header_timeout(&stream);
+    // A connection with nothing on the wire gives up its place in the arrival
+    // lane before it parks in the read. A peer that connects and stays silent
+    // (a browser's preconnect socket, an EventSource the client abandoned but
+    // kept open) would otherwise hold its accept-order ticket for as long as
+    // it lives, up to READ_REQUEST_DEADLINE, and every later request that
+    // touches server state waits behind it: an overlay's next mutation stalls
+    // for seconds because some other socket is idle. A request that has begun
+    // sending keeps its place, so a body still arriving is never overtaken;
+    // the silent one takes a fresh place once its request has actually turned
+    // up, which is the order the server really saw it in.
+    let holds_lane = peer_has_sent_bytes(&stream);
+    if !holds_lane {
+        ticket.release();
+    }
     // Read the whole request under a total wall-clock deadline. Without it a
     // slow-drip or silent peer accepted first would pin its ticket here and
     // wedge every later mutation (Fable BLOCKER, triage D3); the deadline
@@ -633,6 +673,9 @@ fn handle_connection(shared: Shared, mut stream: TcpStream, mut ticket: Ticket) 
         return;
     };
     let _ = stream.set_read_timeout(None);
+    if !holds_lane {
+        ticket = turnstile.issue();
+    }
     // Reading and parsing ran in parallel with other connections; from here
     // on, routes that touch server state run in arrival order. Static asset
     // and read-only-file routes do not need a turn and give theirs up now.

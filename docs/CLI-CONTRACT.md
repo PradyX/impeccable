@@ -1758,6 +1758,8 @@ Restore ("carbonize" is a different concept, see 9): stop = `live-server.mjs sto
 
 Binds `127.0.0.1:PORT`. CORS: if request has `Origin` and (origin is loopback http(s) `localhost|127.0.0.1|::1|[::1]` OR `?token=` equals server token) → `Access-Control-Allow-Origin: <origin>` + `Vary: Origin`. Always `Access-Control-Allow-Methods: GET, POST, OPTIONS`, `Access-Control-Allow-Headers: Content-Type`. `OPTIONS` → 204.
 
+**Arrival order.** A connection is accepted with a place in the request lane, and the routes that touch server state take their turn in that order, so a checkpoint cannot land after the generate it preceded and a refused generate cannot overtake the accept it raced. A connection that has put no byte on the wire keeps no place: a socket accepted with nothing to read gives its place up after 100 ms (`REQUEST_START_GRACE`) and its request takes a fresh place once it actually arrives, so the lane orders the requests the server saw. Without that, a browser preconnect or an EventSource the page abandoned but the client kept open held the lane until that peer died (`READ_REQUEST_DEADLINE`, 10 s) and every later mutation waited behind it: opening and closing overlays made the next one's accept or checkpoint stall for seconds.
+
 | Route | Auth | Behavior |
 |---|---|---|
 | `GET /live.js?token=` | 401 `Unauthorized` (text/plain) if token mismatch | 200 `application/javascript`, `Cache-Control: no-store, no-cache, must-revalidate, max-age=0`, `Pragma: no-cache`; body = prelude + parts (see 3). 500 `Error reading live browser scripts: <msg>` if a part is unreadable. |
