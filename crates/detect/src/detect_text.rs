@@ -86,8 +86,10 @@ pub fn ext_from_file_path(file_path: &str) -> String {
 /// inline waiver naming one can never be shown to be stale by a regex scan.
 pub fn regex_engine_rule_ids(page_analyzers: bool) -> Vec<&'static str> {
     // Inset, pseudo-element and row stripes report side-tab; the grid scan
-    // reports codex-grid-background. Everything else is a line matcher.
-    let mut ids: Vec<&'static str> = vec!["side-tab", "codex-grid-background"];
+    // reports codex-grid-background; the Dart pass reports cream-palette from
+    // a `scaffoldBackgroundColor` / `backgroundColor` literal, which no web
+    // matcher here shapes. Everything else is a line matcher.
+    let mut ids: Vec<&'static str> = vec!["side-tab", "codex-grid-background", "cream-palette"];
     for matcher in REGEX_MATCHERS.iter() {
         if !ids.contains(&matcher.id) {
             ids.push(matcher.id);
