@@ -1661,6 +1661,31 @@ fn unavailable_report(io: &Io, out_dir: &str, gate: &Gate, phase: &str) -> Resul
     report_write.and(cleanup)
 }
 
+/// Rename that also moves a read-only directory. BSD's rename rewrites the moved
+/// directory's own `..` entry, so macOS refuses it without write permission on the
+/// directory itself even when both parents permit the move (Linux checks only the
+/// parents). We own these bytes: widen the mode for the move and put it back.
+fn rename_keeping_mode(from: &Path, to: &Path) -> std::io::Result<()> {
+    match std::fs::rename(from, to) {
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let original = std::fs::symlink_metadata(from)?.permissions();
+                let mut widened = original.clone();
+                widened.set_mode(original.mode() | 0o700);
+                std::fs::set_permissions(from, widened)?;
+                let moved = std::fs::rename(from, to);
+                let _ = std::fs::set_permissions(to, original);
+                moved
+            }
+            #[cfg(not(unix))]
+            Err(e)
+        }
+        other => other,
+    }
+}
+
 fn quarantine_comparison_artifacts(out_dir: &Path) -> Result<Value, String> {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let quarantine = loop {
@@ -1685,7 +1710,7 @@ fn quarantine_comparison_artifacts(out_dir: &Path) -> Result<Value, String> {
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
                 Err(e) => return Err(e),
             }
-            std::fs::rename(&path, &target)
+            rename_keeping_mode(&path, &target)
         })();
         match move_artifact {
             Ok(()) => { artifacts.insert(name.into(), json!(target.to_string_lossy().replace('\\', "/"))); },
